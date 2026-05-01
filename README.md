@@ -1,6 +1,6 @@
-# Plinko -- Roblox Live Cache Library
+# Plinko -- The RAM of Roblox
 
-[![Static Badge](https://img.shields.io/badge/build-v1.0.0--beta-black)](https://github.com/TheRealKr3ative)
+[![Static Badge](https://img.shields.io/badge/build-v0.0.0--beta--(Unreleased)-black)](https://github.com/TheRealKr3ative)
 ![Static Badge](https://img.shields.io/badge/stability-stable-green)
 
 A live in-memory cache for Roblox player and standalone data. Clean API for defining schemas, tracking mutations, replicating state, and hooking into persistence -- without touching DataStore directly.
