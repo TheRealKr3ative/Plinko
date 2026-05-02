@@ -1,9 +1,9 @@
-# Plinko — Live Registry Library 
+# Plinko -- Live Registry Library
 
 [![Static Badge](https://img.shields.io/badge/build-v0.0.0--beta--(unreleased)-black)](https://github.com/TheRealKr3ative)
 ![Static Badge](https://img.shields.io/badge/stability-stable-green)
 
-A live in-memory cache for Roblox player and standalone data. Clean API for defining schemas, tracking mutations, replicating state, and hooking into persistence -- without touching DataStore directly.
+A live in-memory cache for Roblox player and standalone data. Define a schema, write to it, and Plinko handles dirty tracking, replication, and persistence hooks -- without touching DataStore directly.
 
 ---
 
@@ -24,20 +24,20 @@ A live in-memory cache for Roblox player and standalone data. Clean API for defi
 
 ## Features
 
-- **Schema-first** -- declare shape and defaults upfront, keys are validated on every write
-- **Dirty tracking** -- only changed fields are flushed to your persistence layer
+- **Schema-first** -- declare field names and defaults upfront; every write is validated against the schema
+- **Dirty tracking** -- only changed fields are passed to `onSave` -- unchanged keys never trigger a flush
 - **Thenable hooks** -- `onLoad` and `onSave` return Promises -- you own the persistence logic
 - **Replication** -- per-key visibility scoped to `"owner"` or `"all"` via Schema under the hood
-- **Middleware** -- intercept and transform values before they land
-- **Snapshots** -- named point-in-time copies with diff and migrate support
+- **Middleware** -- intercept and transform values before they land on a field
+- **Snapshots** -- named point-in-time copies with diff and rollback support
 - **Standalone caches** -- key by anything, not just players
-- **Multiple caches** -- `Plinko.define()` returns isolated instances
+- **Multiple caches** -- `Plinko.define()` returns isolated instances that coexist independently
 
 ---
 
 ## Installation
 
-Place Plinko and its dependencies in `ReplicatedStorage`:
+Place Plinko and its dependencies inside `ReplicatedStorage`:
 
 ```
 ReplicatedStorage/
@@ -48,7 +48,7 @@ ReplicatedStorage/
         Schema.lua      -- optional, required for replication
 ```
 
-Require it on both server and client:
+Require from both server and client:
 
 ```lua
 local Plinko = require(game:GetService("ReplicatedStorage").Plinko)
@@ -121,16 +121,20 @@ end)
 ## Core Concepts
 
 ### Cache
-`Plinko.define()` returns a **Cache** -- an isolated live store with its own schema, replication config, save hooks, and signals. Multiple caches coexist independently.
+
+`Plinko.define()` returns a **Cache** -- an isolated live store with its own schema, replication config, save hooks, and signals. Multiple caches coexist without interfering with each other.
 
 ### Schema
-The `schema` table defines field names and their default values. Defaults are used for type validation on write and as the baseline for `:reset()` and `:migrate()`.
 
-### Dirty tracking
-Every `:set()` or `:patch()` marks affected keys dirty. Only dirty fields are passed to `onSave` -- reads and unchanged keys never trigger a flush.
+The `schema` table defines field names and their default values. Defaults are used for type validation on every write and serve as the baseline for `:reset()` and `:migrate()`. Writing a key that doesn't exist in the schema is rejected.
+
+### Dirty Tracking
+
+Every `:set()` or `:patch()` marks affected fields dirty. When a flush runs -- either on the auto-save interval, on `PlayerRemoving`, or manually via `:flush()` -- only those dirty fields are passed to `onSave`. Keys that were never written, or written with the same value they already held, are excluded.
 
 ### Thenables
-`onLoad` and `onSave` must return a Promise. Plinko chains off whatever you return -- you choose the persistence layer.
+
+`onLoad` and `onSave` must return a Promise. Plinko chains off whatever you return -- letting you plug in any persistence layer without the library dictating how you talk to DataStore.
 
 ---
 
@@ -138,21 +142,25 @@ Every `:set()` or `:patch()` marks affected keys dirty. Only dirty fields are pa
 
 ### `Plinko.define(name, config)`
 
-Defines a new cache and returns it.
+Defines a new cache and returns it. Calling `define` with the same name twice returns the existing instance.
 
 ```lua
 local Cache = Plinko.define("Players", {
-    schema     = { health = 100, coins = 0 },
-    replicate  = { health = "owner", coins = "owner" },
+    schema = { health = 100, coins = 0 },
+
+    replicate = { health = "owner", coins = "owner" },
+
     visibility = "public",
+
     middleware = {
         health = function(value, old)
             return math.clamp(value, 0, 100)
         end,
     },
-    save       = { interval = 60, onLeave = true },
-    onLoad     = function(player) return Promise.resolve({}) end,
-    onSave     = function(player, data) return Promise.resolve() end,
+
+    save   = { interval = 60, onLeave = true },
+    onLoad = function(player) return Promise.resolve({}) end,
+    onSave = function(player, data) return Promise.resolve() end,
 })
 ```
 
@@ -161,28 +169,28 @@ local Cache = Plinko.define("Players", {
 | `schema` | `table` | Field names and default values |
 | `replicate` | `table?` | Per-key replication scope -- `"owner"` or `"all"` |
 | `visibility` | `string?` | `"public"` (default) or `"private"` |
-| `middleware` | `table?` | Per-key transform functions run before writes land |
-| `save.interval` | `number?` | Auto-flush interval in seconds. `0` disables |
+| `middleware` | `table?` | Per-key transform functions that run before writes land |
+| `save.interval` | `number?` | Auto-flush interval in seconds -- `0` disables |
 | `save.onLeave` | `boolean?` | Flush on `PlayerRemoving`. Defaults to `true` |
 | `onLoad` | `function?` | Called on player join -- must return a Promise resolving to a data table |
 | `onSave` | `function?` | Called on flush -- receives `(player, dirtyFields)`, must return a Promise |
-| `standalone` | `boolean?` | Detaches from player lifecycle -- see [Standalone Caches](#standalone-caches) |
+| `standalone` | `boolean?` | Detaches from the player lifecycle -- see [Standalone Caches](#standalone-caches) |
 
 ---
 
 ### Reading & Writing
 
 ```lua
-Cache:get(player, key)               -- read one key
-Cache:set(player, key, value)        -- write -- runs middleware, validates type, marks dirty
-Cache:increment(player, key, n?)     -- numeric shorthand, n defaults to 1
-Cache:patch(player, delta)           -- merge partial table -- runs middleware per key
-Cache:reset(player, key)             -- revert key to schema default
-Cache:flush(player)                  -- manual save -- returns thenable
-Cache:loaded(player)                 -- boolean
-Cache:await(player?)                 -- thenable resolving to data -- no arg on client
-Cache:lock(player)                   -- freeze all writes
-Cache:unlock(player)                 -- resume writes
+Cache:get(player, key)            -- read one field
+Cache:set(player, key, value)     -- write a field -- runs middleware, validates type, marks dirty
+Cache:increment(player, key, n?)  -- numeric shorthand -- n defaults to 1
+Cache:patch(player, delta)        -- merge a partial table -- runs middleware per field
+Cache:reset(player, key)          -- revert a field to its schema default
+Cache:flush(player)               -- trigger a manual save -- returns a thenable
+Cache:loaded(player)              -- returns true once onLoad has resolved
+Cache:await(player?)              -- thenable resolving to the loaded data table -- omit player on the client
+Cache:lock(player)                -- freeze all writes
+Cache:unlock(player)              -- resume writes after a lock
 ```
 
 ---
@@ -190,8 +198,8 @@ Cache:unlock(player)                 -- resume writes
 ### Visibility
 
 ```lua
-Cache:hide(player)    -- make this player's cache invisible to others
-Cache:show(player)    -- revert to definition visibility
+Cache:hide(player)    -- make this player's cache invisible to other clients
+Cache:show(player)    -- revert to the visibility set in the definition
 ```
 
 ---
@@ -202,15 +210,15 @@ Cache:show(player)    -- revert to definition visibility
 Cache:find(function(player, data)
     return data.rank == "Gold"
 end)
--- returns { [Player]: data }
+-- returns { [Player]: data } for every entry that matches
 
 Cache:some(function(player, data)
     return data.health <= 0
 end)
--- returns boolean
+-- returns true if at least one entry matches
 
-Cache:count()                                    -- total loaded entries
-Cache:count(function(player, data)               -- conditional count
+Cache:count()                          -- total number of loaded entries
+Cache:count(function(player, data)     -- count entries matching a predicate
     return data.kills > 10
 end)
 ```
@@ -220,10 +228,10 @@ end)
 ### Bulk Operations
 
 ```lua
-Cache:setAll(key, value)       -- set a key for every loaded entry
-Cache:patchAll(delta)          -- patch every loaded entry
-Cache:flushAll()               -- flush all dirty entries -- returns thenable
-Cache:resetAll(key)            -- revert a key for every loaded entry
+Cache:setAll(key, value)    -- write a field for every loaded entry
+Cache:patchAll(delta)       -- merge a partial table into every loaded entry
+Cache:flushAll()            -- flush all dirty entries -- returns a thenable
+Cache:resetAll(key)         -- revert a field to its schema default for every loaded entry
 ```
 
 ---
@@ -231,9 +239,9 @@ Cache:resetAll(key)            -- revert a key for every loaded entry
 ### Dirty Inspection
 
 ```lua
-Cache:dirty(player)              -- { [key]: newValue } of unsaved changes
-Cache:isDirty(player, key)       -- boolean for a specific key
-Cache:clearDirty(player)         -- discard dirty flags without saving
+Cache:dirty(player)           -- returns { [key]: newValue } for every unsaved change
+Cache:isDirty(player, key)    -- returns true if a specific field is dirty
+Cache:clearDirty(player)      -- discard dirty flags without saving
 ```
 
 ---
@@ -241,77 +249,67 @@ Cache:clearDirty(player)         -- discard dirty flags without saving
 ### Events & Watching
 
 ```lua
--- watch a single key
-Cache:watch(player, key, function(new, old) end)
+Cache:watch(player, key, function(new, old) end)      -- fires when a specific field changes
+Cache:onChange(player, function(key, new, old) end)   -- fires on any change to a player's data
+Cache:onFlushFor(player, function(dirty) end)         -- fires after each flush for a player
 
--- listen to all changes on a player
-Cache:onChange(player, function(key, new, old) end)
-
--- listen to flushes on a player
-Cache:onFlushFor(player, function(dirty) end)
-
--- cache-level signals
-Cache.onAdded:Connect(function(player, data) end)
-Cache.onRemoving:Connect(function(player, data) end)
-Cache.onFlush:Connect(function(player, dirty) end)
-Cache.onError:Connect(function(player, err) end)
+Cache.onAdded:Connect(function(player, data) end)     -- fires when a player's data loads
+Cache.onRemoving:Connect(function(player, data) end)  -- fires just before data is released
+Cache.onFlush:Connect(function(player, dirty) end)    -- fires after any flush
+Cache.onError:Connect(function(player, err) end)      -- fires when onLoad or onSave rejects
 ```
 
-> On the client, `:watch()` and `:onChange()` take no player argument -- they always refer to the local player's data.
+> On the client, `:watch()` and `:onChange()` omit the player argument -- they always refer to the local player's data.
 
 ---
 
 ### Destruction
 
 ```lua
-Cache:destroy()    -- flushAll -> release all entries -> fire onRemoving -> destroy signals
+Cache:destroy()
+-- flushAll -> release all entries -> fire onRemoving -> destroy all signals
 ```
 
 ---
 
 ## Replication
 
-Set `replicate` in the definition to control which keys reach clients.
+Add a `replicate` table to the definition to control which fields reach clients and who can see them.
 
 ```lua
 replicate = {
-    health = "owner",    -- only the owning client receives this key
-    rank   = "all",      -- all clients receive this key
+    health = "owner",    -- only the owning client receives updates to this field
+    rank   = "all",      -- all clients receive updates to this field
 }
 ```
 
-Replication fires automatically on every `:set()` and `:patch()` for flagged keys. Force-push manually:
+Replication fires automatically after every `:set()` and `:patch()` call for flagged fields. To push changes manually:
 
 ```lua
-Cache:push(player, key)    -- replicate one key now
-Cache:pushAll(player)      -- replicate all flagged keys now
+Cache:push(player, key)    -- replicate one field immediately
+Cache:pushAll(player)      -- replicate all flagged fields immediately
 ```
 
-Set `visibility = "private"` to prevent other clients from reading `"all"` keys for a given player. Override per-player at runtime:
+Setting `visibility = "private"` in the definition prevents other clients from receiving `"all"` fields for a given player. Override this per player at runtime with `:hide()` and `:show()`.
 
-```lua
-Cache:hide(player)
-Cache:show(player)
-```
-
-Replication requires Schema. If the `replicate` field is omitted entirely, Schema is never touched.
+Replication requires Schema. If the `replicate` field is omitted from the definition entirely, Schema is never loaded or used.
 
 ---
 
 ## Snapshots
 
-Named point-in-time copies of a player's data.
+Snapshots are named, point-in-time copies of a player's current data. They're useful for pre-round baselines, undo flows, or comparing state after a sequence of mutations.
 
 ```lua
-Cache:snapshot(player, "beforeCombat")             -- take a snapshot
-Cache:getSnapshot(player, "beforeCombat")          -- read snapshot data
-Cache:diff(player, "beforeCombat")                 -- { [key]: { old, new } } vs current state
-Cache:migrate(player, "beforeCombat")              -- revert current state to snapshot, marks dirty
-Cache:destroySnapshot(player, "beforeCombat")      -- remove one snapshot
-Cache:destroySnapshots(player)                     -- remove all snapshots for player
+Cache:snapshot(player, "beforeCombat")          -- capture current state
+Cache:getSnapshot(player, "beforeCombat")       -- read a snapshot without modifying state
+Cache:diff(player, "beforeCombat")              -- returns { [key]: { old, new } } vs current state
+Cache:migrate(player, "beforeCombat")           -- overwrite current state with snapshot, marks fields dirty
+Cache:destroySnapshot(player, "beforeCombat")   -- remove one snapshot
+Cache:destroySnapshots(player)                  -- remove all snapshots for a player
 ```
 
-Snapshots are accessible directly:
+Snapshot data is also accessible directly when needed:
 
 ```lua
 Cache._snapshots[player]["beforeCombat"]    -- raw data table
@@ -321,7 +319,7 @@ Cache._snapshots[player]["beforeCombat"]    -- raw data table
 
 ## Standalone Caches
 
-Set `standalone = true` to decouple a cache from the player lifecycle. Useful for match state, round data, or any server-side store keyed by something other than a player.
+Set `standalone = true` to decouple a cache from the player lifecycle entirely. The cache won't listen to `PlayerAdded` or `PlayerRemoving`, and it doesn't support `onLoad` or `onSave`. Lifecycle is fully manual -- useful for match state, zone data, or any server-side store keyed by something other than a player.
 
 ```lua
 local MatchCache = Plinko.define("MatchCache", {
@@ -341,8 +339,6 @@ MatchCache:patch("match_001", { teamScores = { red = 3, blue = 1 } })
 MatchCache:release("match_001")
 ```
 
-Standalone caches have no `onLoad`, `onSave`, or `PlayerRemoving` wiring. Lifecycle is fully manual.
-
 ---
 
 ## Examples
@@ -361,7 +357,7 @@ end
 
 ---
 
-### Clamp health with middleware
+### Clamping health with middleware
 
 ```lua
 local Cache = Plinko.define("Players", {
@@ -371,7 +367,6 @@ local Cache = Plinko.define("Players", {
             return math.clamp(value, 0, 100)
         end,
     },
-    ...
 })
 
 Cache:set(player, "health", 9999)
@@ -385,14 +380,11 @@ Cache:get(player, "health")    -- 100
 ```lua
 Cache:snapshot(player, "preRound")
 
--- round plays out
 Cache:set(player, "health", 20)
 Cache:increment(player, "deaths", 1)
 
--- inspect what changed
 local changes = Cache:diff(player, "preRound")
 
--- roll back
 Cache:migrate(player, "preRound")
 ```
 
@@ -407,7 +399,6 @@ local MatchCache = Plinko.define("MatchCache", {
 })
 
 MatchCache:create(matchId)
-
 MatchCache:increment(matchId, "redScore", 1)
 
 MatchCache.onRemoving:Connect(function(id, data)
@@ -454,6 +445,4 @@ end)
 
 ---
 
-*Last Updated: May 1, 2026*
-
----
+*Last Updated: May 2, 2026*
