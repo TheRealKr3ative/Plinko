@@ -1,4 +1,4 @@
-# Plinko — The RAM of Roblox
+# Plinko — Live Memory Library 
 
 [![Static Badge](https://img.shields.io/badge/build-v0.0.0--beta--(unreleased)-black)](https://github.com/TheRealKr3ative)
 ![Static Badge](https://img.shields.io/badge/stability-stable-green)
